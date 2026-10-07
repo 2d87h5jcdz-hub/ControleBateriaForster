@@ -7,3 +7,7 @@ App de controle de vendas, devedores, estoque e compras de baterias, com preço 
 - Cada push na `main` gera o `Forster.ipa` na aba **Actions** (artefato `Forster-ipa`).
 
 Os dados ficam num arquivo dentro do app (`Library/dados.json`). Use **Ajustes › Salvar backup** para levar os dados para outro celular.
+
+## Web app (sem expiração)
+Cada push na `main` também publica o app no GitHub Pages (workflow **Publicar web app**).
+No iPhone: abra o endereço no Safari › Compartilhar › **Adicionar à Tela de Início**.
