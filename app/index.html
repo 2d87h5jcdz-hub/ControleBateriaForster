@@ -312,7 +312,7 @@ function seed(){
     }
   });
   return { versao:2, exemplo:true,
-    config:{ cotacao:Math.round(cot*100)/100, cotacaoData:t, prazoDias:7, arredondar:true },
+    config:{ cotacao:Math.round(cot*100)/100, cotacaoData:t, acrescimo:0.10, prazoDias:7, arredondar:true },
     produtos, clientes, vendas, fornecedores, compras };
 }
 
@@ -345,7 +345,9 @@ async function iniciar(){
   S = dados;
   if (!S || (!S.compras && S.exemplo)) S = seed();
   S.compras ||= []; S.fornecedores ||= [];
+  S.config.acrescimo ??= 0.10;
   save(); render();
+  atualizarCotacaoAuto();
 }
 
 /* Custo real: cada venda consome as compras mais antigas primeiro (FIFO).
@@ -389,6 +391,7 @@ const custoReal = v => lotes().custoVenda[v.id] ?? v.custoBRL;
 const forn = id => S.fornecedores.find(f => f.id === id);
 const ultimoCusto = pid => { const cs = S.compras.filter(c => c.itens.some(i => i.produtoId === pid)).sort((a,b) => b.data.localeCompare(a.data)); return cs[0]?.itens.find(i => i.produtoId === pid).custoBRL; };
 
+const cotVenda = () => Math.round((S.config.cotacao + (S.config.acrescimo || 0)) * 100) / 100;
 const cli = id => S.clientes.find(c => c.id === id);
 const prod = id => S.produtos.find(p => p.id === id);
 const status = v => v.pagoEm ? "pago" : (v.vencimento < hoje() ? "atrasado" : "aberto");
@@ -424,9 +427,9 @@ const TABS = [["inicio","Início"],["vendas","Vendas"],["receber","A receber"],[
 /* ============ cabeçalho ============ */
 function header(title){
   const stale = S.config.cotacaoData !== hoje();
-  const quando = stale ? `de ${fDate(S.config.cotacaoData)} · atualizar` : "dólar turismo · hoje";
+  const quando = stale ? `turismo de ${fDate(S.config.cotacaoData)} · atualizar` : `turismo ${fRate(S.config.cotacao)} + ${fRate(S.config.acrescimo || 0)}`;
   return `<div class="top"><h1>${title}</h1>
-    <button class="rate ${stale?"stale":""}" data-act="cotacao" aria-label="Cotação do dólar"><b>US$ 1 = R$ ${fRate(S.config.cotacao)}</b><small>${quando}</small></button>
+    <button class="rate ${stale?"stale":""}" data-act="cotacao" aria-label="Cotação de venda do dólar"><b>US$ 1 = R$ ${fRate(cotVenda())}</b><small>${quando}</small></button>
     <button class="iconbtn" data-act="ajustes" aria-label="Ajustes">${I.config}</button></div>`;
 }
 
@@ -714,13 +717,13 @@ function renderProdutos(){
   return `<div class="stack">
     <div style="display:flex;gap:10px"><input class="search" id="busca-prod" type="search" placeholder="Buscar CR2032, 23A, AA…" value="${esc(ui.buscaProd)}" aria-label="Buscar produto">
       <button class="btn pri" data-act="novo-prod" style="flex:none">+ Produto</button></div>
-    <div class="hint">Preços em dólar. O valor em reais usa a cotação de hoje: R$ ${fRate(S.config.cotacao)}.</div>
+    <div class="hint">Preços em dólar. O valor em reais usa o dólar de venda de hoje: R$ ${fRate(cotVenda())}.</div>
     ${grupos.map(([k, l]) => `<div><div class="day-h"><span>${CATS[k]}</span><span>${l.length}</span></div>
       <div class="card list" style="padding-block:0">${l.map(p => { const m = p.precoUSD ? (p.precoUSD-p.custoUSD)/p.precoUSD*100 : 0; return `
         <button class="row" data-prod="${p.id}"><span class="cell ${p.categoria==="pilha"?"pilha":""}">${esc(p.codigo)}</span>
           <span class="main"><div class="t">${esc(p.codigo)} <span style="font-weight:400;color:var(--muted)">· ${esc(p.nome)}</span></div>
             <div class="s"><span class="mono" style="color:var(--usd)">${fUSD(p.precoUSD)}</span> · ${ultimoCusto(p.id) != null ? `pago ${fBRL(ultimoCusto(p.id))}/un.` : `custo ${fUSD(p.custoUSD)}`}</div></span>
-          <span class="end"><div class="amt">${fBRL(p.precoUSD*S.config.cotacao)}</div><div class="s ${p.estoque<=p.estoqueMin?"low":""}">${p.estoque} em estoque</div></span></button>`; }).join("")}</div></div>`).join("")
+          <span class="end"><div class="amt">${fBRL(p.precoUSD*cotVenda())}</div><div class="s ${p.estoque<=p.estoqueMin?"low":""}">${p.estoque} em estoque</div></span></button>`; }).join("")}</div></div>`).join("")
       || `<div class="card empty">Nenhum produto encontrado.</div>`}
   </div>`;
 }
@@ -741,7 +744,7 @@ function sheetProduto(id){
     `<div style="display:flex;gap:10px">${id && !usado ? `<button class="btn dan" id="p-del">Excluir</button>` : ""}<button class="btn pri block" id="p-save">Salvar</button></div>`,
     root => {
       const conv = () => { const c = num(root.querySelector("#p-custo").value), v = num(root.querySelector("#p-preco").value);
-        root.querySelector("#p-conv").textContent = `Hoje: custo ${fBRL(c*S.config.cotacao)} · venda ${fBRL(v*S.config.cotacao)} · lucro ${fBRL((v-c)*S.config.cotacao)} por unidade`; };
+        const cv = cotVenda(); root.querySelector("#p-conv").textContent = `Hoje: venda ${fBRL(v*cv)} por unidade (dólar a R$ ${fRate(cv)})`; };
       ["#p-custo","#p-preco"].forEach(s => root.querySelector(s).addEventListener("input", conv)); conv();
       root.querySelector("#p-save").addEventListener("click", () => {
         const codigo = root.querySelector("#p-cod").value.trim().toUpperCase();
@@ -773,7 +776,7 @@ function retornoCompra(c){
   Object.entries(st.itens).forEach(([pid, it]) => {
     const resta = it.qtd - it.vendido, p = prod(pid);
     restanteCusto += resta * it.cu;
-    restanteVenda += resta * (p ? p.precoUSD * S.config.cotacao : it.cu);
+    restanteVenda += resta * (p ? p.precoUSD * cotVenda() : it.cu);
   });
   return { ...st, lucro: st.receita - st.custoVendido, pct: st.pago ? st.receita / st.pago : 0,
     pctRecebido: st.pago ? st.recebido / st.pago : 0, restanteCusto, restanteVenda,
@@ -970,9 +973,10 @@ function sheetNovaVenda(){
         <span class="step"><button data-d="-1" aria-label="Menos ${esc(p.codigo)}">−</button><input id="q-${p.id}" inputmode="numeric" value="0" aria-label="Quantidade ${esc(p.codigo)}"><button data-d="1" aria-label="Mais ${esc(p.codigo)}">+</button></span>
       </div>`).join("")}</div></div>
 
-    <div class="grid2"><div class="field"><label for="nv-cot">Dólar turismo (R$)</label><input id="nv-cot" inputmode="decimal" value="${fRate(S.config.cotacao)}"></div>
+    <div class="grid2"><div class="field"><label for="nv-cot">Dólar de venda (R$)</label><input id="nv-cot" inputmode="decimal" value="${fRate(cotVenda())}"></div>
       <div class="field"><label for="nv-data">Data da entrega</label><input id="nv-data" type="date" value="${hoje()}"></div></div>
-    ${stale ? `<div class="warn">A cotação é de ${fDate(S.config.cotacaoData)}. Confira o valor de hoje antes de salvar.</div>` : ""}
+    <div class="hint" style="margin-top:-8px">Turismo R$ ${fRate(S.config.cotacao)} + acréscimo R$ ${fRate(S.config.acrescimo || 0)}</div>
+    ${stale ? `<div class="warn">O dólar turismo é de ${fDate(S.config.cotacaoData)}. Confira o valor de hoje antes de salvar.</div>` : ""}
 
     <div class="field"><span class="flabel">Pagamento</span>
       <div class="seg" id="nv-pg"><button aria-pressed="true" data-v="depois">Cobrar depois</button><button aria-pressed="false" data-v="agora">Pagou agora</button></div></div>
@@ -1018,7 +1022,6 @@ function sheetNovaVenda(){
         if (pg === "agora"){ v.vencimento = data; v.pagoEm = data; v.forma = q("#nv-agora [aria-pressed=true]").dataset.f; }
         else v.vencimento = q("#nv-venc").value || addDays(data, S.config.prazoDias);
         itens.forEach(i => { const p = prod(i.produtoId); if (p) p.estoque -= i.qtd; });
-        if (data === hoje() && Math.abs(cot - S.config.cotacao) > 1e-9){ S.config.cotacao = cot; S.config.cotacaoData = hoje(); }
         S.vendas.push(v); save(); closeSheet();
         ui.tab = "vendas"; ui.filtroVendas = "todas"; render(); toast(`Venda de ${fBRL(v.totalBRL)} salva`);
       });
@@ -1035,26 +1038,47 @@ async function buscarCotacao(){
   return Math.round(v*100)/100;
 }
 function sheetCotacao(){
-  openSheet("Dólar turismo", `
-    <div class="hint">Os preços dos produtos estão em dólar. Esta cotação converte para reais na hora da venda.</div>
-    <div class="field"><label for="ct-val">Valor de hoje (R$ por US$ 1)</label><input id="ct-val" inputmode="decimal" value="${fRate(S.config.cotacao)}" style="font-family:var(--mono);font-size:24px"></div>
-    <button class="btn sec block" id="ct-buscar">Buscar cotação na internet</button>
-    <div class="hint" id="ct-msg">Última atualização: ${fDate(S.config.cotacaoData)}${S.config.cotacaoData===hoje()?" (hoje)":""}</div>`,
-    `<button class="btn pri block" id="ct-ok">Usar esta cotação</button>`,
+  const hora = S.config.cotacaoAt ? new Date(S.config.cotacaoAt).toLocaleTimeString("pt-BR",{hour:"2-digit",minute:"2-digit"}) : "";
+  openSheet("Dólar de venda", `
+    <div class="hint">O app busca o dólar turismo sozinho ao abrir, e soma o acréscimo. O resultado é o dólar usado nas vendas.</div>
+    <div class="grid2"><div class="field"><label for="ct-val">Dólar turismo (R$)</label><input id="ct-val" inputmode="decimal" value="${fRate(S.config.cotacao)}" style="font-family:var(--mono);font-size:22px"></div>
+      <div class="field"><label for="ct-acr">Acréscimo (R$)</label><input id="ct-acr" inputmode="decimal" value="${fRate(S.config.acrescimo || 0)}" style="font-family:var(--mono);font-size:22px"></div></div>
+    <div class="sum card"><span>Dólar de venda</span><span class="big mono" id="ct-venda"></span></div>
+    <button class="btn sec block" id="ct-buscar">Buscar dólar turismo agora</button>
+    <div class="hint" id="ct-msg">${S.config.cotacaoData === hoje() ? `Atualizado hoje${hora ? " às " + hora : ""}` : `Último valor de ${fDate(S.config.cotacaoData)}`} · fonte: AwesomeAPI (dólar turismo, venda)</div>`,
+    `<button class="btn pri block" id="ct-ok">Usar estes valores</button>`,
     root => {
-      root.querySelector("#ct-buscar").addEventListener("click", async e => {
-        const b = e.currentTarget, msg = root.querySelector("#ct-msg"); b.disabled = true; b.textContent = "Buscando…";
-        try { const v = await buscarCotacao(); root.querySelector("#ct-val").value = fRate(v); msg.textContent = "Cotação do dólar turismo encontrada. Confira e toque em Usar."; }
+      const q = sel => root.querySelector(sel);
+      const calc = () => { q("#ct-venda").textContent = "R$ " + fRate(num(q("#ct-val").value) + num(q("#ct-acr").value)); };
+      q("#ct-val").addEventListener("input", calc); q("#ct-acr").addEventListener("input", calc); calc();
+      let buscado = false;
+      q("#ct-buscar").addEventListener("click", async e => {
+        const b = e.currentTarget, msg = q("#ct-msg"); b.disabled = true; b.textContent = "Buscando…";
+        try { const v = await buscarCotacao(); q("#ct-val").value = fRate(v); calc(); buscado = true; msg.textContent = "Dólar turismo atualizado. Toque em Usar para salvar."; }
         catch { msg.textContent = "Não consegui buscar agora. Digite o valor do dia."; }
-        b.disabled = false; b.textContent = "Buscar cotação na internet";
+        b.disabled = false; b.textContent = "Buscar dólar turismo agora";
       });
-      root.querySelector("#ct-ok").addEventListener("click", () => {
-        const v = num(root.querySelector("#ct-val").value);
-        if (!(v > 0)){ toast("Digite um valor válido"); return; }
-        S.config.cotacao = v; S.config.cotacaoData = hoje(); save(); closeSheet(); render(); toast(`Dólar a R$ ${fRate(v)}`);
+      q("#ct-ok").addEventListener("click", () => {
+        const v = num(q("#ct-val").value), a = num(q("#ct-acr").value);
+        if (!(v > 0) || a < 0){ toast("Digite valores válidos"); return; }
+        Object.assign(S.config, { cotacao:v, acrescimo:a, cotacaoData:hoje(), cotacaoAt:Date.now(), cotacaoManual:!buscado });
+        save(); closeSheet(); render(); toast(`Dólar de venda: R$ ${fRate(cotVenda())}`);
       });
     });
 }
+/* Busca automática: ao abrir o app e ao voltar para ele (no máximo 1 vez por hora).
+   Se ele digitou o valor na mão hoje, a busca automática respeita e não troca. */
+async function atualizarCotacaoAuto(){
+  const c = S.config;
+  if (c.cotacaoData === hoje() && c.cotacaoManual) return;
+  if (c.cotacaoAt && Date.now() - c.cotacaoAt < 3600e3) return;
+  try {
+    const v = await buscarCotacao();
+    Object.assign(c, { cotacao:v, cotacaoData:hoje(), cotacaoAt:Date.now(), cotacaoManual:false });
+    save(); render();
+  } catch {}
+}
+document.addEventListener("visibilitychange", () => { if (!document.hidden && S) atualizarCotacaoAuto(); });
 
 function sheetAjustes(){
   openSheet("Ajustes", `
