@@ -1,0 +1,68 @@
+name: Gerar IPA
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Instalar dependências
+        run: npm install --no-audit --no-fund
+
+      - name: Montar o app web
+        run: npm run build
+
+      - name: Criar projeto iOS
+        run: npx cap add ios
+
+      - name: Gerar ícone e tela inicial
+        run: >
+          npx capacitor-assets generate --ios
+          --iconBackgroundColor '#0b6e5f' --iconBackgroundColorDark '#0b6e5f'
+          --splashBackgroundColor '#0b6e5f' --splashBackgroundColorDark '#0e2824'
+
+      - name: Sincronizar
+        run: npx cap sync ios
+
+      - name: Ajustar Info.plist (nome e só retrato)
+        run: |
+          P=ios/App/App/Info.plist
+          /usr/libexec/PlistBuddy -c "Set :CFBundleDisplayName Forster" "$P" || /usr/libexec/PlistBuddy -c "Add :CFBundleDisplayName string Forster" "$P"
+          /usr/libexec/PlistBuddy -c "Delete :UISupportedInterfaceOrientations" "$P" || true
+          /usr/libexec/PlistBuddy -c "Add :UISupportedInterfaceOrientations array" "$P"
+          /usr/libexec/PlistBuddy -c "Add :UISupportedInterfaceOrientations:0 string UIInterfaceOrientationPortrait" "$P"
+          /usr/libexec/PlistBuddy -c "Delete :UISupportedInterfaceOrientations~ipad" "$P" || true
+
+      - name: Compilar (sem assinatura)
+        run: |
+          set -o pipefail
+          if [ -d ios/App/App.xcworkspace ]; then SRC="-workspace ios/App/App.xcworkspace"; else SRC="-project ios/App/App.xcodeproj"; fi
+          xcodebuild $SRC -scheme App -configuration Release -sdk iphoneos \
+            -destination 'generic/platform=iOS' -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
+            build 2>&1 | tee build.log
+
+      - name: Mostrar erros de compilação
+        if: failure()
+        run: |
+          [ -f build.log ] && grep -E "error:" build.log | sort -u | head -10 | while IFS= read -r line; do echo "::error::${line}"; done || true
+
+      - name: Empacotar .ipa
+        run: |
+          mkdir -p Payload
+          cp -R build/Build/Products/Release-iphoneos/App.app Payload/
+          zip -qry Forster.ipa Payload
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Forster-ipa
+          path: Forster.ipa

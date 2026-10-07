@@ -1,0 +1,21 @@
+{
+  "appId": "com.forster.baterias",
+  "appName": "Forster",
+  "webDir": "www",
+  "ios": {
+    "contentInset": "never",
+    "backgroundColor": "#0b6e5f"
+  },
+  "plugins": {
+    "SplashScreen": {
+      "launchShowDuration": 3000,
+      "launchAutoHide": true,
+      "launchFadeOutDuration": 400,
+      "backgroundColor": "#0b6e5f",
+      "showSpinner": false
+    },
+    "CapacitorHttp": {
+      "enabled": true
+    }
+  }
+}
